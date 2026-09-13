@@ -1,0 +1,390 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ CORE MODELS ============
+
+model League {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  logoUrl   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  seasons   Season[]
+  clubs     Club[]
+  settings  Setting[]
+  auditLogs AuditLog[]
+}
+
+model Season {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  name      String
+  year      Int
+  startDate DateTime
+  endDate   DateTime?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matches    Match[]
+  standings  Standing[]
+  @@unique([leagueId, year])
+}
+
+model Club {
+  id              String   @id @default(cuid())
+  leagueId        String
+  league          League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  name            String
+  logoUrl         String?
+  discordRoleId   String?
+  managerId       String?
+  manager         User?    @relation("ClubManager", fields: [managerId], references: [id])
+  assistantId     String?
+  assistant       User?    @relation("ClubAssistant", fields: [assistantId], references: [id])
+  headCoachId     String?
+  headCoach       User?    @relation("ClubHeadCoach", fields: [headCoachId], references: [id])
+  budget          BigInt   @default(5000000)
+  startingBudget  BigInt   @default(5000000)
+  rosterLimit     Int      @default(30)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  players              Player[]
+  budgetTransactions   BudgetTransaction[]
+  lfpPosts             LfpPost[]
+  transfersOut         Transfer[] @relation("TransferSeller")
+  transfersIn          Transfer[] @relation("TransferBuyer")
+  loansOut             Loan[] @relation("LoanOwner")
+  loansIn              Loan[] @relation("LoanClub")
+  contractsOut         Contract[] @relation("ContractClub")
+  matchesHome          Match[] @relation("MatchHome")
+  matchesAway          Match[] @relation("MatchAway")
+  standings            Standing[]
+  @@unique([leagueId, name])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  discordId    String   @unique
+  username     String
+  displayName  String?
+  avatar       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  playerProfile           PlayerProfile?
+  managedClubs            Club[] @relation("ClubManager")
+  assistantClubs          Club[] @relation("ClubAssistant")
+  coachClubs              Club[] @relation("ClubHeadCoach")
+  offers                  Offer[]
+  lfpInterests            LfpInterest[]
+  valuationChanges        PlayerValuation[]
+  statUpdates             PlayerStats[]
+  auditLogs               AuditLog[]
+}
+
+model PlayerProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  robloxUsername  String?
+  country         String?
+  position        String   // ST, CM, CB, GK, etc.
+  overallRating   Int      @default(50)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  player          Player?
+  stats           PlayerStats[]
+  valuations      PlayerValuation[]
+}
+
+model Player {
+  id              String   @id @default(cuid())
+  profileId       String   @unique
+  profile         PlayerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  clubId          String?
+  club            Club?    @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  currentValue    BigInt   @default(30000)
+  valuationTier   String   @default("30000")
+  status          String   @default("FREE_AGENT") // FREE_AGENT, ACTIVE, LOANED, TRANSFER_PENDING, RELEASED
+  joinedAt        DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  contracts       Contract[]
+  stats           PlayerStats[]
+  valuations      PlayerValuation[]
+  offers          Offer[] @relation("OfferPlayer")
+  transfersOut    Transfer[] @relation("TransferPlayer")
+  loansOut        Loan[] @relation("LoanPlayer")
+  lfpPosts        LfpPost[]
+  lfpInterests    LfpInterest[]
+  history         PlayerHistory[]
+}
+
+model PlayerHistory {
+  id        String   @id @default(cuid())
+  playerId  String
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  clubId    String?
+  club      Club?    @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  eventType String   // SIGNED, TRANSFERRED, LOANED, RELEASED, RETURNED
+  fromClub  String?
+  toClub    String?
+  date      DateTime @default(now())
+  notes     String?
+
+  @@index([playerId])
+}
+
+model PlayerStats {
+  id          String   @id @default(cuid())
+  profileId   String
+  profile     PlayerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  matches     Int      @default(0)
+  goals       Int      @default(0)
+  assists     Int      @default(0)
+  cleanSheets Int      @default(0)
+  avgRating   Float    @default(0)
+  updatedBy   String?  // User ID who updated
+  updatedAt   DateTime @updatedAt
+
+  @@unique([profileId])
+}
+
+model PlayerValuation {
+  id            String   @id @default(cuid())
+  profileId     String
+  profile       PlayerProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  previousValue BigInt
+  newValue      BigInt
+  tier          String   // 30000, 60000, 150000, 450000, 1000000, 3000000
+  reason        String
+  notes         String?
+  changedBy     String   // User ID
+  changedByUser User     @relation(fields: [changedBy], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([profileId])
+}
+
+model Contract {
+  id            String   @id @default(cuid())
+  playerId      String
+  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  clubId        String
+  club          Club     @relation("ContractClub", fields: [clubId], references: [id], onDelete: Cascade)
+  startDate     DateTime
+  endDate       DateTime
+  contractLength Int      // in months
+  salary        BigInt   @default(0)
+  marketValue   BigInt
+  status        String   @default("ACTIVE") // ACTIVE, EXPIRED, TRANSFER_PENDING, LOANED, TERMINATED, RELEASED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([playerId, clubId])
+}
+
+model Offer {
+  id              String   @id @default(cuid())
+  playerId        String
+  player          Player   @relation("OfferPlayer", fields: [playerId], references: [id], onDelete: Cascade)
+  fromClubId      String
+  toClubId        String
+  offerType       String   // FREE_AGENT, TRANSFER, LOAN
+  transferFee     BigInt   @default(0)
+  salaryOffer     BigInt   @default(0)
+  contractMonths  Int      @default(12)
+  managerMessage  String?
+  status          String   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  approvals       String[] @default([]) // Array of approval IDs
+  createdBy       String   // User ID
+  createdByUser   User     @relation(fields: [createdBy], references: [id])
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([playerId, status])
+}
+
+model Transfer {
+  id            String   @id @default(cuid())
+  playerId      String
+  player        Player   @relation("TransferPlayer", fields: [playerId], references: [id], onDelete: Cascade)
+  sellerId      String
+  seller        Club     @relation("TransferSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  buyerId       String
+  buyer         Club     @relation("TransferBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  fee           BigInt
+  approvals     String[] @default([])
+  staffApproved Boolean  @default(false)
+  completedAt   DateTime?
+  status        String   @default("PENDING") // PENDING, COMPLETED, CANCELLED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([playerId, status])
+}
+
+model Loan {
+  id             String   @id @default(cuid())
+  playerId       String
+  player         Player   @relation("LoanPlayer", fields: [playerId], references: [id], onDelete: Cascade)
+  ownerId        String   // Original club
+  owner          Club     @relation("LoanOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  clubId         String   // Loan club
+  club           Club     @relation("LoanClub", fields: [clubId], references: [id], onDelete: Restrict)
+  loanFee        BigInt   @default(0)
+  salarySplit    Int      @default(50) // Percentage owner pays
+  startDate      DateTime
+  endDate        DateTime
+  recallClause   Boolean  @default(false)
+  approvals      String[] @default([])
+  status         String   @default("PENDING") // PENDING, ACTIVE, COMPLETED, RECALLED
+  completedAt    DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([playerId, status])
+}
+
+model BudgetTransaction {
+  id          String   @id @default(cuid())
+  clubId      String
+  club        Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  type        String   // TRANSFER_OUT, TRANSFER_IN, LOAN_OUT, LOAN_IN, SALARY, STAFF, ADJUSTMENT
+  amount      BigInt
+  description String
+  reference   String?  // Transfer ID, Loan ID, etc.
+  createdAt   DateTime @default(now())
+
+  @@index([clubId, createdAt])
+}
+
+model LfpPost {
+  id           String   @id @default(cuid())
+  createdBy    String   // User ID or Club ID
+  type         String   // TEAM, PLAYER
+  clubId       String?
+  club         Club?    @relation(fields: [clubId], references: [id], onDelete: SetNull)
+  playerId     String?
+  player       Player?  @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  position     String?
+  playersNeeded Int     @default(1)
+  minOverall   Int      @default(0)
+  requirements String?
+  description  String
+  availability String   @default("ACTIVE")
+  status       String   @default("ACTIVE") // ACTIVE, CLOSED, REMOVED
+  interestCount Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  interests    LfpInterest[]
+  @@index([type, status])
+}
+
+model LfpInterest {
+  id        String   @id @default(cuid())
+  postId    String
+  post      LfpPost  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  playerId  String?
+  player    Player?  @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+
+  @@unique([postId, userId])
+  @@index([postId, userId])
+}
+
+model Match {
+  id           String   @id @default(cuid())
+  seasonId     String
+  season       Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  homeClubId   String
+  homeClub     Club     @relation("MatchHome", fields: [homeClubId], references: [id], onDelete: Restrict)
+  awayClubId   String
+  awayClub     Club     @relation("MatchAway", fields: [awayClubId], references: [id], onDelete: Restrict)
+  date         DateTime
+  competition  String   // League, Cup, etc.
+  refereeId    String?
+  homeGoals    Int?
+  awayGoals    Int?
+  status       String   @default("SCHEDULED") // SCHEDULED, LIVE, COMPLETED, CANCELLED
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([seasonId, status])
+}
+
+model Standing {
+  id       String @id @default(cuid())
+  seasonId String
+  season   Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  clubId   String
+  club     Club   @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  played   Int    @default(0)
+  won      Int    @default(0)
+  drawn    Int    @default(0)
+  lost     Int    @default(0)
+  goalsFor Int    @default(0)
+  goalsAgainst Int @default(0)
+  points   Int    @default(0)
+
+  @@unique([seasonId, clubId])
+}
+
+model Tournament {
+  id        String   @id @default(cuid())
+  leagueId  String
+  name      String
+  type      String   // GROUP, KNOCKOUT, ROUND_ROBIN
+  status    String   @default("PLANNING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  type      String   // string, number, boolean, array
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([leagueId, key])
+  @@index([leagueId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  leagueId  String
+  league    League   @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String   // Player, Club, Transfer, etc.
+  entityId  String
+  details   String   // JSON details
+  createdAt DateTime @default(now())
+
+  @@index([leagueId, createdAt])
+  @@index([entityId])
+}
